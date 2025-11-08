@@ -284,3 +284,234 @@ test('query interface filters across ashrams and categories', async () => {
   assert.equal(yamunaReminders.length, 1);
   assert.equal(yamunaReminders[0].assetName, 'LG Refrigerator');
 });
+
+test('asset editing, documents, and reminders can be managed after creation', async () => {
+  const { service } = createService();
+  const admin = await service.registerUser({
+    email: 'admin@example.com',
+    password: 'supersecure',
+    displayName: 'System Admin',
+    roles: ['ADMIN', 'HEAD_OFFICE'],
+  });
+  const ashram = await service.createAshram({
+    name: 'Yamuna Ashram',
+    location: 'Haridwar',
+    createdBy: admin.id,
+  });
+  const caretaker = await service.registerUser({
+    email: 'caretaker@yamuna.org',
+    password: 'caretaker1',
+    displayName: 'Yamuna Caretaker',
+    roles: ['ASHRAM_USER'],
+  });
+  await service.assignUserToAshram({
+    userId: caretaker.id,
+    ashramId: ashram.id,
+    roles: ['ASHRAM_USER'],
+    requestedBy: admin.id,
+  });
+
+  const asset = await createAsset(service, admin, caretaker, ashram);
+  const updated = await service.updateAssetDetails({
+    assetId: asset.id,
+    updatedBy: caretaker.id,
+    name: 'Toyota Innova Crysta',
+    owner: 'Fleet Team',
+    metadata: { registration: 'UK07AB1234', kms: 54000 },
+  });
+  assert.equal(updated.name, 'Toyota Innova Crysta');
+  assert.equal(updated.owner, 'Fleet Team');
+  assert.equal(updated.metadata.kms, 54000);
+
+  const recategorized = await service.updateAssetDetails({
+    assetId: asset.id,
+    updatedBy: admin.id,
+    category: 'ELECTRICAL',
+    status: 'ARCHIVED',
+  });
+  assert.equal(recategorized.category, 'ELECTRICAL');
+  assert.equal(recategorized.status, 'ARCHIVED');
+  assert.ok(recategorized.archivedAt);
+  assert.match(recategorized.assetTag, /^YAMU-ELE-0001$/);
+
+  const reactivated = await service.updateAssetDetails({
+    assetId: asset.id,
+    updatedBy: admin.id,
+    status: 'ACTIVE',
+  });
+  assert.equal(reactivated.status, 'ACTIVE');
+  assert.equal(reactivated.archivedAt, null);
+
+  const withDocs = await service.addDocumentToAsset({
+    assetId: asset.id,
+    addedBy: caretaker.id,
+    documents: [
+      {
+        name: 'Road Tax Certificate',
+        url: 'https://example.com/docs/innova-tax.pdf',
+        category: 'OTHER',
+      },
+    ],
+  });
+  assert.equal(withDocs.documents.length, 3);
+
+  const reminderAdded = await service.scheduleAssetReminder({
+    assetId: asset.id,
+    addedBy: caretaker.id,
+    reminder: {
+      type: 'MAINTENANCE',
+      dueDate: new Date('2030-03-01T00:00:00.000Z'),
+      notes: 'Quarterly service',
+    },
+  });
+  assert.equal(reminderAdded.reminders.length, 3);
+
+  const newReminder = reminderAdded.reminders.at(-1);
+  const reminderUpdated = await service.updateAssetReminder({
+    assetId: asset.id,
+    reminderId: newReminder.id,
+    updatedBy: caretaker.id,
+    dueDate: new Date('2030-04-15T00:00:00.000Z'),
+    notes: 'Rescheduled service',
+  });
+  const persistedReminder = reminderUpdated.reminders.find((item) => item.id === newReminder.id);
+  assert.equal(persistedReminder.notes, 'Rescheduled service');
+  assert.equal(
+    persistedReminder.dueDate.toISOString(),
+    new Date('2030-04-15T00:00:00.000Z').toISOString(),
+  );
+});
+
+test('dashboards summarize ashram and head office inventories', async () => {
+  const { service } = createService();
+  const admin = await service.registerUser({
+    email: 'admin@example.com',
+    password: 'supersecure',
+    displayName: 'System Admin',
+    roles: ['ADMIN', 'HEAD_OFFICE'],
+  });
+  const ganga = await service.createAshram({
+    name: 'Ganga Ashram',
+    location: 'Rishikesh',
+    createdBy: admin.id,
+  });
+  const yamuna = await service.createAshram({
+    name: 'Yamuna Ashram',
+    location: 'Haridwar',
+    createdBy: admin.id,
+  });
+
+  const gangaUser = await service.registerUser({
+    email: 'ganga.caretaker@example.com',
+    password: 'gangapass',
+    displayName: 'Ganga Caretaker',
+    roles: ['ASHRAM_USER'],
+  });
+  await service.assignUserToAshram({
+    userId: gangaUser.id,
+    ashramId: ganga.id,
+    roles: ['ASHRAM_USER'],
+    requestedBy: admin.id,
+  });
+
+  const yamunaUser = await service.registerUser({
+    email: 'yamuna.caretaker@example.com',
+    password: 'yamunapass',
+    displayName: 'Yamuna Caretaker',
+    roles: ['ASHRAM_USER'],
+  });
+  await service.assignUserToAshram({
+    userId: yamunaUser.id,
+    ashramId: yamuna.id,
+    roles: ['ASHRAM_USER'],
+    requestedBy: admin.id,
+  });
+
+  await service.addAsset({
+    ashramId: ganga.id,
+    name: 'Mahindra Scorpio',
+    category: 'CAR',
+    purchaseDate: new Date('2023-01-01T00:00:00.000Z'),
+    status: 'ACTIVE',
+    owner: 'Ganga Ashram',
+    reminders: [{ type: 'INSURANCE', dueDate: new Date('2030-01-15T00:00:00.000Z') }],
+    documents: [],
+    addedBy: gangaUser.id,
+  });
+
+  await service.addAsset({
+    ashramId: ganga.id,
+    name: 'Dell Latitude',
+    category: 'LAPTOP',
+    purchaseDate: new Date('2024-02-01T00:00:00.000Z'),
+    status: 'ACTIVE',
+    owner: 'Ganga Ashram',
+    reminders: [{ type: 'WARRANTY', dueDate: new Date('2031-02-01T00:00:00.000Z') }],
+    documents: [],
+    addedBy: gangaUser.id,
+  });
+
+  await service.addAsset({
+    ashramId: yamuna.id,
+    name: 'LG Refrigerator',
+    category: 'ELECTRICAL',
+    purchaseDate: new Date('2022-05-05T00:00:00.000Z'),
+    status: 'ACTIVE',
+    owner: 'Yamuna Ashram',
+    reminders: [{ type: 'MAINTENANCE', dueDate: new Date('2030-01-20T00:00:00.000Z') }],
+    documents: [],
+    addedBy: yamunaUser.id,
+  });
+
+  const jeep = await service.addAsset({
+    ashramId: yamuna.id,
+    name: 'Old Jeep',
+    category: 'CAR',
+    purchaseDate: new Date('2018-03-03T00:00:00.000Z'),
+    status: 'ACTIVE',
+    owner: 'Yamuna Ashram',
+    reminders: [],
+    documents: [],
+    addedBy: yamunaUser.id,
+  });
+  await service.archiveAsset({ assetId: jeep.id, archivedBy: admin.id });
+
+  const cutoff = new Date('2030-02-01T00:00:00.000Z');
+  const gangaDashboard = await service.getAshramDashboard({
+    ashramId: ganga.id,
+    requestedBy: gangaUser.id,
+    dueBefore: cutoff,
+  });
+  assert.equal(gangaDashboard.totalAssets, 2);
+  assert.equal(gangaDashboard.countsByCategory.CAR, 1);
+  assert.equal(gangaDashboard.countsByCategory.LAPTOP, 1);
+  assert.equal(gangaDashboard.upcomingReminders.length, 1);
+  assert.ok(gangaDashboard.assets.every((record) => record.status !== 'ARCHIVED'));
+
+  const headOfficeDashboard = await service.getHeadOfficeDashboard({
+    requestedBy: admin.id,
+    filters: { status: 'ACTIVE' },
+    dueBefore: cutoff,
+  });
+  assert.equal(headOfficeDashboard.totals.assets, 3);
+  assert.equal(headOfficeDashboard.totals.ashrams, 2);
+  assert.equal(headOfficeDashboard.countsByCategory.CAR, 1);
+  assert.equal(headOfficeDashboard.countsByCategory.LAPTOP, 1);
+  assert.equal(headOfficeDashboard.countsByCategory.ELECTRICAL, 1);
+  assert.equal(headOfficeDashboard.upcomingReminders.length, 2);
+  assert.equal(
+    headOfficeDashboard.totals.remindersDue,
+    headOfficeDashboard.upcomingReminders.length,
+  );
+  const gangaBreakdown = headOfficeDashboard.ashramBreakdown.find(
+    (entry) => entry.ashramId === ganga.id,
+  );
+  const yamunaBreakdown = headOfficeDashboard.ashramBreakdown.find(
+    (entry) => entry.ashramId === yamuna.id,
+  );
+  assert.ok(gangaBreakdown);
+  assert.ok(yamunaBreakdown);
+  assert.equal(gangaBreakdown.assetCount, 2);
+  assert.equal(yamunaBreakdown.assetCount, 1);
+  assert.equal(headOfficeDashboard.filters.status, 'ACTIVE');
+});

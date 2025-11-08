@@ -5,12 +5,14 @@ import {
   assertDate,
   assertEmail,
   assertEnum,
+  assertPlainObject,
   assertPositiveInteger,
   assertString,
 } from '../utils/validators.js';
 
 const USER_ROLES = ['ADMIN', 'ASHRAM_USER', 'HEAD_OFFICE'];
 const ASSET_STATUSES = ['ACTIVE', 'ARCHIVED', 'SOLD'];
+const ASSET_CATEGORIES = ['CAR', 'ELECTRICAL', 'LAPTOP', 'FURNITURE', 'OTHER'];
 const REMINDER_TYPES = ['INSURANCE', 'TAX', 'MAINTENANCE', 'WARRANTY', 'CUSTOM'];
 const DOCUMENT_CATEGORIES = ['INVOICE', 'WARRANTY', 'RC', 'INSURANCE', 'PHOTO', 'OTHER'];
 
@@ -129,31 +131,24 @@ export class AssetManagementService {
     addedBy,
   }) {
     const actor = await this.requireUser(addedBy);
-    this.requireAssignment(actor.id, ashramId);
+    await this.ensureAssetAccess(actor, ashramId);
 
     const ashram = await this.requireAshram(ashramId);
-    const normalizedCategory = assertEnum(category, ['CAR', 'ELECTRICAL', 'LAPTOP', 'FURNITURE', 'OTHER'], 'Asset category');
+    const normalizedCategory = assertEnum(category, ASSET_CATEGORIES, 'Asset category');
     const normalizedStatus = assertEnum(status, ASSET_STATUSES, 'Asset status');
     const validatedName = assertString(name, 'Asset name');
     const assetPurchaseDate = assertDate(purchaseDate, 'Purchase date');
     const ownerName = owner ? assertString(owner, 'Owner') : undefined;
+    const metadataPayload =
+      metadata === undefined ? {} : structuredClone(assertPlainObject(metadata, 'Metadata'));
 
-    const preparedReminders = reminders.map((reminder) => ({
-      id: randomUUID(),
-      type: assertEnum(reminder.type, REMINDER_TYPES, 'Reminder type'),
-      dueDate: assertDate(reminder.dueDate, 'Reminder due date'),
-      notes: reminder.notes ? assertString(reminder.notes, 'Reminder notes') : undefined,
-      completed: Boolean(reminder.completed ?? false),
-      completedAt: reminder.completed ? new Date() : null,
-    }));
+    const preparedReminders = assertArray(reminders ?? [], 'Reminders').map((reminder) =>
+      this.prepareReminder(reminder),
+    );
 
-    const preparedDocuments = documents.map((doc) => ({
-      id: randomUUID(),
-      name: assertString(doc.name, 'Document name'),
-      url: assertString(doc.url, 'Document URL'),
-      category: assertEnum(doc.category, DOCUMENT_CATEGORIES, 'Document category'),
-      uploadedAt: new Date(),
-    }));
+    const preparedDocuments = assertArray(documents ?? [], 'Documents').map((doc) =>
+      this.prepareDocument(doc),
+    );
 
     const assetTag = this.generateAssetTag(ashram, normalizedCategory);
     const qrPayload = this.generateQrPayload({
@@ -172,7 +167,7 @@ export class AssetManagementService {
       purchaseDate: assetPurchaseDate,
       status: normalizedStatus,
       owner: ownerName,
-      metadata,
+      metadata: metadataPayload,
       reminders: preparedReminders,
       documents: preparedDocuments,
       qrCode: qrPayload,
@@ -205,8 +200,12 @@ export class AssetManagementService {
     return Buffer.from(JSON.stringify(payload)).toString('base64url');
   }
 
-  async listAssetsByAshram(ashramId) {
-    return this.assets.listByAshramId(assertString(ashramId, 'Ashram ID'));
+  async listAssetsByAshram(ashramId, { includeArchived = false } = {}) {
+    const assets = await this.assets.listByAshramId(assertString(ashramId, 'Ashram ID'));
+    if (includeArchived) {
+      return assets;
+    }
+    return assets.filter((asset) => asset.status !== 'ARCHIVED');
   }
 
   async queryAssets({ category, status, ashramId, reminderDueBefore, search }) {
@@ -258,11 +257,9 @@ export class AssetManagementService {
   }
 
   async markReminderComplete({ assetId, reminderId, completedBy }) {
-    await this.requireUser(completedBy);
-    const asset = await this.assets.findById(assertString(assetId, 'Asset ID'));
-    if (!asset) {
-      throw new Error('Asset not found');
-    }
+    const actor = await this.requireUser(completedBy);
+    const asset = await this.requireAsset(assetId);
+    await this.ensureAssetAccess(actor, asset.ashramId);
     const reminder = asset.reminders.find((item) => item.id === reminderId);
     if (!reminder) {
       throw new Error('Reminder not found');
@@ -313,6 +310,169 @@ export class AssetManagementService {
     return true;
   }
 
+  async updateAssetDetails({
+    assetId,
+    updatedBy,
+    name,
+    category,
+    purchaseDate,
+    status,
+    owner,
+    metadata,
+  }) {
+    const actor = await this.requireUser(updatedBy);
+    const asset = await this.requireAsset(assetId);
+    await this.ensureAssetAccess(actor, asset.ashramId);
+    const patch = {};
+    let ashramRecord = null;
+
+    if (name !== undefined) {
+      patch.name = assertString(name, 'Asset name');
+    }
+    if (category !== undefined) {
+      const normalizedCategory = assertEnum(category, ASSET_CATEGORIES, 'Asset category');
+      if (normalizedCategory !== asset.category) {
+        ashramRecord ??= await this.requireAshram(asset.ashramId);
+        patch.category = normalizedCategory;
+        patch.assetTag = this.generateAssetTag(ashramRecord, normalizedCategory);
+      }
+    }
+    if (purchaseDate !== undefined) {
+      patch.purchaseDate = assertDate(purchaseDate, 'Purchase date');
+    }
+    if (status !== undefined) {
+      const normalizedStatus = assertEnum(status, ASSET_STATUSES, 'Asset status');
+      patch.status = normalizedStatus;
+      patch.archivedAt =
+        normalizedStatus === 'ARCHIVED' ? asset.archivedAt ?? new Date() : null;
+    }
+    if (owner !== undefined) {
+      patch.owner = owner === null ? undefined : assertString(owner, 'Owner');
+    }
+    if (metadata !== undefined) {
+      patch.metadata =
+        metadata === null ? {} : structuredClone(assertPlainObject(metadata, 'Metadata'));
+    }
+
+    if (Object.keys(patch).length === 0) {
+      throw new Error('At least one asset field must be updated');
+    }
+
+    patch.updatedAt = new Date();
+    return this.assets.update(asset.id, patch);
+  }
+
+  async addDocumentToAsset({ assetId, documents, addedBy }) {
+    const actor = await this.requireUser(addedBy);
+    const asset = await this.requireAsset(assetId);
+    await this.ensureAssetAccess(actor, asset.ashramId);
+    const items = assertArray(documents ?? [], 'Documents to add');
+    if (items.length === 0) {
+      throw new Error('At least one document must be provided');
+    }
+    const prepared = items.map((doc) => this.prepareDocument(doc));
+    const updatedDocuments = [...asset.documents, ...prepared];
+    return this.assets.update(asset.id, {
+      documents: updatedDocuments,
+      updatedAt: new Date(),
+    });
+  }
+
+  async scheduleAssetReminder({ assetId, reminder, addedBy }) {
+    if (!reminder) {
+      throw new Error('Reminder payload is required');
+    }
+    const actor = await this.requireUser(addedBy);
+    const asset = await this.requireAsset(assetId);
+    await this.ensureAssetAccess(actor, asset.ashramId);
+    const preparedReminder = this.prepareReminder(reminder);
+    return this.assets.update(asset.id, {
+      reminders: [...asset.reminders, preparedReminder],
+      updatedAt: new Date(),
+    });
+  }
+
+  async updateAssetReminder({ assetId, reminderId, updatedBy, type, dueDate, notes }) {
+    const actor = await this.requireUser(updatedBy);
+    const asset = await this.requireAsset(assetId);
+    await this.ensureAssetAccess(actor, asset.ashramId);
+    const reminderIndex = asset.reminders.findIndex((item) => item.id === reminderId);
+    if (reminderIndex === -1) {
+      throw new Error('Reminder not found');
+    }
+    const reminder = { ...asset.reminders[reminderIndex] };
+    let updated = false;
+    if (type !== undefined) {
+      reminder.type = assertEnum(type, REMINDER_TYPES, 'Reminder type');
+      updated = true;
+    }
+    if (dueDate !== undefined) {
+      reminder.dueDate = assertDate(dueDate, 'Reminder due date');
+      updated = true;
+    }
+    if (notes !== undefined) {
+      reminder.notes = notes === null ? undefined : assertString(notes, 'Reminder notes');
+      updated = true;
+    }
+    if (!updated) {
+      throw new Error('At least one reminder field must be updated');
+    }
+    reminder.updatedAt = new Date();
+    const reminders = asset.reminders.map((item, index) =>
+      index === reminderIndex ? reminder : item,
+    );
+    return this.assets.update(asset.id, { reminders, updatedAt: new Date() });
+  }
+
+  async getAshramDashboard({ ashramId, requestedBy, dueBefore }) {
+    const actor = await this.requireUser(requestedBy);
+    const normalizedAshramId = await this.ensureAssetAccess(actor, ashramId);
+    const ashram = await this.requireAshram(normalizedAshramId);
+    const assets = await this.listAssetsByAshram(normalizedAshramId);
+    const cutoff =
+      dueBefore === undefined
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        : assertDate(dueBefore, 'Reminder cutoff');
+    const upcomingReminders = await this.getUpcomingReminders({
+      ashramId: normalizedAshramId,
+      dueBefore: cutoff,
+    });
+    return {
+      ashram,
+      assets,
+      totalAssets: assets.length,
+      countsByCategory: this.countBy(assets, 'category'),
+      countsByStatus: this.countBy(assets, 'status'),
+      upcomingReminders,
+    };
+  }
+
+  async getHeadOfficeDashboard({ requestedBy, filters = {}, dueBefore }) {
+    const actor = await this.requireUser(requestedBy);
+    this.requireAnyRole(actor, ['ADMIN', 'HEAD_OFFICE']);
+    const appliedFilters = filters ?? {};
+    const assets = await this.queryAssets(appliedFilters);
+    const ashramBreakdown = await this.buildAshramBreakdown(assets);
+    const cutoff =
+      dueBefore === undefined
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        : assertDate(dueBefore, 'Reminder cutoff');
+    const upcomingReminders = await this.getUpcomingReminders({ dueBefore: cutoff });
+    return {
+      filters: appliedFilters,
+      totals: {
+        assets: assets.length,
+        ashrams: ashramBreakdown.length,
+        remindersDue: upcomingReminders.length,
+      },
+      countsByCategory: this.countBy(assets, 'category'),
+      countsByStatus: this.countBy(assets, 'status'),
+      ashramBreakdown,
+      assets,
+      upcomingReminders,
+    };
+  }
+
   async requireUser(id) {
     const user = await this.users.findById(assertString(id, 'User ID'));
     if (!user) {
@@ -327,6 +487,72 @@ export class AssetManagementService {
       throw new Error('Ashram not found');
     }
     return ashram;
+  }
+
+  async requireAsset(id) {
+    const asset = await this.assets.findById(assertString(id, 'Asset ID'));
+    if (!asset || asset.deletedAt) {
+      throw new Error('Asset not found');
+    }
+    return asset;
+  }
+
+  async ensureAssetAccess(user, ashramId) {
+    const normalizedAshramId = assertString(ashramId, 'Ashram ID');
+    const privileged = user.roles.some((role) => ['ADMIN', 'HEAD_OFFICE'].includes(role));
+    if (!privileged) {
+      await this.requireAssignment(user.id, normalizedAshramId);
+    }
+    return normalizedAshramId;
+  }
+
+  countBy(collection, property) {
+    return collection.reduce((acc, item) => {
+      const key = item[property];
+      if (!key) return acc;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  async buildAshramBreakdown(assets) {
+    const uniqueIds = Array.from(new Set(assets.map((asset) => asset.ashramId)));
+    const summaries = [];
+    for (const id of uniqueIds) {
+      const ashram = await this.ashrams.findById(id);
+      if (!ashram) continue;
+      const assetCount = assets.filter((asset) => asset.ashramId === id).length;
+      summaries.push({ ashramId: id, name: ashram.name, assetCount });
+    }
+    return summaries.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  prepareReminder(reminder) {
+    if (!reminder || typeof reminder !== 'object') {
+      throw new Error('Reminder payload must be provided');
+    }
+    return {
+      id: randomUUID(),
+      type: assertEnum(reminder.type, REMINDER_TYPES, 'Reminder type'),
+      dueDate: assertDate(reminder.dueDate, 'Reminder due date'),
+      notes: reminder.notes ? assertString(reminder.notes, 'Reminder notes') : undefined,
+      completed: Boolean(reminder.completed ?? false),
+      completedAt: reminder.completed ? new Date() : null,
+      scheduledAt: new Date(),
+    };
+  }
+
+  prepareDocument(doc) {
+    if (!doc || typeof doc !== 'object') {
+      throw new Error('Document payload must be provided');
+    }
+    return {
+      id: randomUUID(),
+      name: assertString(doc.name, 'Document name'),
+      url: assertString(doc.url, 'Document URL'),
+      category: assertEnum(doc.category, DOCUMENT_CATEGORIES, 'Document category'),
+      uploadedAt: new Date(),
+    };
   }
 
   async requireAssignment(userId, ashramId) {

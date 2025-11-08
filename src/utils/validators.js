@@ -41,3 +41,10 @@ export function assertPositiveInteger(value, fieldName) {
   }
   return value;
 }
+
+export function assertPlainObject(value, fieldName) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be a plain object`);
+  }
+  return value;
+}

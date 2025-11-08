@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ashram Asset Management Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <img src="https://www.artofliving.org/sites/www.artofliving.org/files/styles/original_image/public/wysiwyg_imageupload/aolf_logo_1.png" alt="Ashram logo" class="brand-logo" />
+        <h1>Ashram Asset Management System</h1>
+      </div>
+      <div class="auth-actions">
+        <button id="signInButton" class="primary">Sign in with Google</button>
+        <button id="signOutButton" class="secondary hidden">Sign out</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="card" id="accountCard">
+        <div class="section-header">
+          <h2>Your Account</h2>
+          <span class="status-dot offline" id="authIndicator"></span>
+        </div>
+        <p id="authStatus">Sign in to load your assignments.</p>
+        <div id="roleBadges" class="role-badges"></div>
+      </section>
+
+      <section class="card hidden" id="adminTools" data-role="admin-only">
+        <div class="section-header">
+          <h2>Admin Workspace</h2>
+          <p>Manage ashrams and grant access to caretakers or head-office staff.</p>
+        </div>
+        <div class="grid two-column">
+          <form id="createAshramForm" class="stack">
+            <h3>Create Ashram</h3>
+            <label>
+              Ashram Name
+              <input type="text" name="name" placeholder="Ganga Ashram" required />
+            </label>
+            <label>
+              Location
+              <input type="text" name="location" placeholder="Rishikesh" />
+            </label>
+            <button class="primary">Create Ashram</button>
+          </form>
+
+          <form id="assignUserForm" class="stack">
+            <h3>Assign User</h3>
+            <label>
+              User Email
+              <input type="email" name="email" placeholder="caretaker@example.com" required />
+            </label>
+            <label>
+              Role
+              <select name="role" required>
+                <option value="ASHRAM_USER">Ashram User</option>
+                <option value="HEAD_OFFICE">Head Office</option>
+                <option value="ADMIN">Admin</option>
+              </select>
+            </label>
+            <label>
+              Ashram
+              <select name="ashramId" id="assignAshramSelect" required>
+                <option value="">Select an ashram...</option>
+              </select>
+            </label>
+            <button class="primary">Assign</button>
+            <p class="hint">Users must sign in once before they can be assigned.</p>
+          </form>
+        </div>
+      </section>
+
+      <div class="tabs">
+        <button class="tab-button active" data-tab="overview">Overview</button>
+        <button class="tab-button" data-tab="add">Add Asset</button>
+      </div>
+
+      <section class="card tab-panel active" data-panel="overview" id="ashramBoard">
+        <div class="section-header">
+          <h2>Ashram Dashboard</h2>
+          <div>
+            <label class="inline">
+              <span>Select Ashram</span>
+              <select id="ashramSelect">
+                <option value="">No ashrams available</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="stat-grid" id="ashramStats">
+          <div class="stat-card">
+            <p>Total Assets</p>
+            <strong id="ashramTotalAssets">0</strong>
+          </div>
+          <div class="stat-card">
+            <p>Active Reminders (30d)</p>
+            <strong id="ashramReminderCount">0</strong>
+          </div>
+          <div class="stat-card">
+            <p>Most Common Category</p>
+            <strong id="ashramTopCategory">–</strong>
+          </div>
+        </div>
+        <div class="filter-toolbar">
+          <div>
+            <label>
+              Search
+              <input type="search" id="assetSearch" placeholder="Search by name, tag, owner..." />
+            </label>
+          </div>
+          <div>
+            <label>
+              Category
+              <select id="filterCategory">
+                <option value="ALL">All</option>
+                <option value="CAR">Car</option>
+                <option value="ELECTRICAL">Electrical</option>
+                <option value="LAPTOP">Laptop</option>
+                <option value="FURNITURE">Furniture</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>
+              Status
+              <select id="filterStatus">
+                <option value="ALL">All</option>
+                <option value="ACTIVE">Active</option>
+                <option value="SOLD">Sold</option>
+                <option value="ARCHIVED">Archived</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="stack">
+            <h3>Assets</h3>
+            <div id="assetList" class="asset-list empty-state">
+              <p>Select an ashram to load assets.</p>
+            </div>
+          </div>
+          <div class="stack">
+            <h3>Upcoming Reminders (30 days)</h3>
+            <div id="reminderList" class="reminder-list empty-state">
+              <p>No reminders queued.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tab-panel" data-panel="add">
+        <div class="stack">
+          <h3>Add Asset</h3>
+          <form id="assetForm" class="stack">
+              <label>
+                Asset Name
+                <input type="text" name="name" placeholder="Toyota Innova" required />
+              </label>
+              <label>
+                Category
+                <select name="category" required>
+                  <option value="CAR">Car</option>
+                  <option value="ELECTRICAL">Electrical</option>
+                  <option value="LAPTOP">Laptop</option>
+                  <option value="FURNITURE">Furniture</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+              <label>
+                Status
+                <select name="status" required>
+                  <option value="ACTIVE">Active</option>
+                  <option value="SOLD">Sold</option>
+                  <option value="ARCHIVED">Archived</option>
+                </select>
+              </label>
+              <label>
+                Purchase Date
+                <input type="date" name="purchaseDate" required />
+              </label>
+              <label>
+                Owner / Custodian
+                <input type="text" name="owner" placeholder="Fleet Team" />
+              </label>
+              <label>
+                Notes / Metadata
+                <textarea name="notes" rows="3" placeholder="Registration, warranty, etc."></textarea>
+              </label>
+
+              <fieldset>
+                <legend>Document (optional)</legend>
+                <label>
+                  Document Name
+                  <input type="text" name="docName" placeholder="Insurance Policy" />
+                </label>
+                <label>
+                  Document URL
+                  <input type="url" name="docUrl" placeholder="https://example.com/policy.pdf" />
+                </label>
+                <label>
+                  Category
+                  <select name="docCategory">
+                    <option value="INSURANCE">Insurance</option>
+                    <option value="RC">RC</option>
+                    <option value="INVOICE">Invoice</option>
+                    <option value="WARRANTY">Warranty</option>
+                    <option value="PHOTO">Photo</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </label>
+                <label>
+                  Upload File
+                  <input type="file" name="docFile" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt" />
+                </label>
+                <p class="hint">Files are stored securely in Backblaze B2 (10GB free tier); leave blank to link an existing URL instead.</p>
+              </fieldset>
+
+              <fieldset>
+                <legend>Reminder (optional)</legend>
+                <label>
+                  Reminder Type
+                  <select name="reminderType">
+                    <option value="">-- none --</option>
+                    <option value="INSURANCE">Insurance</option>
+                    <option value="TAX">Tax</option>
+                    <option value="MAINTENANCE">Maintenance</option>
+                    <option value="WARRANTY">Warranty</option>
+                    <option value="CUSTOM">Custom</option>
+                  </select>
+                </label>
+                <label>
+                  Due Date
+                  <input type="date" name="reminderDue" />
+                </label>
+                <label>
+                  Notes
+                  <input type="text" name="reminderNotes" placeholder="Renew before expiry" />
+                </label>
+              </fieldset>
+
+              <button class="primary">Add Asset</button>
+            </form>
+
+        </div>
+      </section>
+
+      <section class="card hidden" id="headOfficeBoard" data-role="head-office">
+        <div class="section-header">
+          <h2>Head Office Overview</h2>
+          <p>Cross-ashram snapshot for admins and head-office teams.</p>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <p>Total Assets</p>
+            <strong id="hoTotalAssets">0</strong>
+          </div>
+          <div class="stat-card">
+            <p>Active Ashrams</p>
+            <strong id="hoTotalAshrams">0</strong>
+          </div>
+          <div class="stat-card">
+            <p>Open Reminders (30d)</p>
+            <strong id="hoReminders">0</strong>
+          </div>
+        </div>
+        <div class="grid two-column stack-desktop">
+          <div>
+            <h3>Assets by Ashram</h3>
+            <div id="hoAshramBreakdown" class="breakdown-list empty-state">
+              <p>No data loaded.</p>
+            </div>
+          </div>
+          <div>
+            <h3>Upcoming Reminders</h3>
+            <div id="hoReminderList" class="reminder-list empty-state">
+              <p>No reminders due.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <div id="assetDetailModal" class="modal hidden">
+      <div class="modal-content">
+        <button id="closeAssetDetail" class="close-btn" aria-label="Close asset details">&times;</button>
+        <div id="assetDetailBody"></div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
