@@ -1,0 +1,12 @@
+{
+  "name": "ashram-assert",
+  "version": "2.0.0",
+  "description": "Ashram Asset Management System service layer with in-memory persistence and tests",
+  "scripts": {
+    "start": "node src/run.js",
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
+    "web": "node scripts/serve-web.js"
+  },
+  "type": "module"
+}
