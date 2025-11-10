@@ -191,6 +191,8 @@
                 <textarea name="notes" rows="3" placeholder="Registration, warranty, etc."></textarea>
               </label>
 
+              <div id="categoryFields" class="category-fields"></div>
+
               <fieldset>
                 <legend>Document (optional)</legend>
                 <label>
@@ -214,7 +216,7 @@
                 </label>
                 <label>
                   Upload File
-                  <input type="file" name="docFile" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt" />
+                  <input type="file" name="docFile" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt" capture="environment" />
                 </label>
                 <p class="hint">Files are stored securely in Backblaze B2 (10GB free tier); leave blank to link an existing URL instead.</p>
               </fieldset>
