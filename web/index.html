@@ -28,7 +28,7 @@
         <div id="roleBadges" class="role-badges"></div>
       </section>
 
-      <section class="card hidden" id="adminTools" data-role="admin-only">
+      <section class="card hidden" id="adminTools" data-role="admin-only" data-requires-access="true">
         <div class="section-header">
           <h2>Admin Workspace</h2>
           <p>Manage ashrams and grant access to caretakers or head-office staff.</p>
@@ -73,12 +73,20 @@
         </div>
       </section>
 
-      <div class="tabs">
+      <section class="card hidden" id="noAccessCard">
+        <div class="no-access">
+          <h2>Access Required</h2>
+          <p>Your account is not yet linked to any ashram.</p>
+          <p>Please contact the Bangalore Ashram administration team to request access.</p>
+        </div>
+      </section>
+
+      <div class="tabs" data-requires-access="true">
         <button class="tab-button active" data-tab="overview">Overview</button>
         <button class="tab-button" data-tab="add">Add Asset</button>
       </div>
 
-      <section class="card tab-panel active" data-panel="overview" id="ashramBoard">
+      <section class="card tab-panel active" data-panel="overview" id="ashramBoard" data-requires-access="true">
         <div class="section-header">
           <h2>Ashram Dashboard</h2>
           <div>
@@ -152,7 +160,7 @@
         </div>
       </section>
 
-      <section class="card tab-panel" data-panel="add">
+      <section class="card tab-panel" data-panel="add" data-requires-access="true">
         <div class="stack">
           <h3>Add Asset</h3>
           <form id="assetForm" class="stack">
@@ -191,7 +199,7 @@
                 <textarea name="notes" rows="3" placeholder="Registration, warranty, etc."></textarea>
               </label>
 
-              <div id="categoryFields" class="category-fields"></div>
+              <div id="categoryFields" class="category-fields hidden"></div>
 
               <fieldset>
                 <legend>Document (optional)</legend>
@@ -218,7 +226,6 @@
                   Upload File
                   <input type="file" name="docFile" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt" capture="environment" />
                 </label>
-                <p class="hint">Files are stored securely in Backblaze B2 (10GB free tier); leave blank to link an existing URL instead.</p>
               </fieldset>
 
               <fieldset>
@@ -244,13 +251,21 @@
                 </label>
               </fieldset>
 
+              <fieldset>
+                <legend>Item Photo</legend>
+                <label>
+                  Capture Photo
+                  <input type="file" name="primaryPhoto" accept="image/*" capture="environment" />
+                </label>
+              </fieldset>
+
               <button class="primary">Add Asset</button>
             </form>
 
         </div>
       </section>
 
-      <section class="card hidden" id="headOfficeBoard" data-role="head-office">
+      <section class="card hidden" id="headOfficeBoard" data-role="head-office" data-requires-access="true">
         <div class="section-header">
           <h2>Head Office Overview</h2>
           <p>Cross-ashram snapshot for admins and head-office teams.</p>

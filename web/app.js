@@ -90,6 +90,7 @@ const ASSET_STATUSES = ['ACTIVE', 'SOLD', 'ARCHIVED'];
 const REMINDER_TYPES = ['INSURANCE', 'TAX', 'MAINTENANCE', 'WARRANTY', 'CUSTOM'];
 const ASSET_CATEGORIES = ['CAR', 'ELECTRICAL', 'LAPTOP', 'FURNITURE', 'OTHER'];
 const DOCUMENT_CATEGORIES = ['INVOICE', 'WARRANTY', 'RC', 'INSURANCE', 'PHOTO', 'OTHER'];
+const ACCESS_CONTROLS = () => document.querySelectorAll('[data-requires-access="true"]');
 const CATEGORY_FIELD_CONFIG = {
   CAR: [
     { name: 'vehicleType', label: 'Vehicle Type', placeholder: 'SUV, Sedan, Van' },
@@ -163,6 +164,7 @@ onAuthStateChanged(auth, async (user) => {
     state.profile = await ensureUserProfile(user);
     updateAuthUI(state.profile);
     await refreshAshrams();
+    applyAccessRestrictions();
     selectAshram(state.selectedAshramId || state.ashrams[0]?.id || '');
     if (hasHeadOfficeAccess()) {
       await loadHeadOfficeSnapshot();
@@ -395,6 +397,13 @@ function cleanupSubscriptions() {
 
 function subscribeToAssets() {
   cleanupSubscriptions();
+  if (!hasAshramAccess()) {
+    state.assetDocs = [];
+    renderAssetList();
+    renderReminders([]);
+    renderAshramStats([]);
+    return;
+  }
   if (!state.selectedAshramId) {
     ui.assetList.innerHTML = '<div class="empty-state"><p>Select an ashram to load assets.</p></div>';
     state.assetDocs = [];
@@ -453,6 +462,7 @@ async function handleCreateAshram(event) {
     form.reset();
     showToast('Ashram created.', 'success');
     await refreshAshrams();
+    applyAccessRestrictions();
   } catch (error) {
     handleError(error);
   }
@@ -529,6 +539,7 @@ async function handleAssignUser(event) {
     showToast(`Assigned ${email} to ${ashramSnap.data().name} as ${role}.`, 'success');
     form.reset();
     await refreshAshrams();
+    applyAccessRestrictions();
   } catch (error) {
     handleError(error);
   }
@@ -562,6 +573,7 @@ async function handleAssetSubmit(event) {
     reminderNotes: formData.get('reminderNotes')?.trim(),
   };
   const docFile = form.querySelector('input[name="docFile"]')?.files?.[0];
+  const photoFile = form.querySelector('input[name="primaryPhoto"]')?.files?.[0];
   const categoryMetadata = collectCategoryMetadata(form, payload.category);
 
   if (!payload.name || !payload.purchaseDate) {
@@ -571,9 +583,14 @@ async function handleAssetSubmit(event) {
 
   try {
     let uploadedDocument = null;
+    let uploadedPhoto = null;
     if (docFile && docFile.size > 0) {
       showToast('Uploading document...', 'info');
       uploadedDocument = await uploadDocumentFile(docFile, { ashramId: state.selectedAshramId });
+    }
+    if (photoFile && photoFile.size > 0) {
+      showToast('Uploading photo...', 'info');
+      uploadedPhoto = await uploadDocumentFile(photoFile, { ashramId: state.selectedAshramId });
     }
 
     await runTransaction(db, async (txn) => {
@@ -652,14 +669,18 @@ async function handleAssetSubmit(event) {
         status: payload.status,
         purchaseDate: new Date(payload.purchaseDate),
         owner: payload.owner || '',
-        metadata: {
-          ...(payload.notes ? { notes: payload.notes } : {}),
-          ...(categoryMetadata || {}),
-        },
+        metadata: buildMetadata(payload.notes, categoryMetadata),
         documents,
         reminders: reminder,
         assetTag,
         assetCountersCategoryIndex: nextCount,
+        primaryPhoto: uploadedPhoto
+          ? {
+              url: uploadedPhoto.url,
+              storagePath: uploadedPhoto.storagePath,
+              metadata: uploadedPhoto,
+            }
+          : null,
         qrCode,
         qrPayload,
         createdBy: state.profile.id,
@@ -710,6 +731,17 @@ function collectCategoryMetadata(form, category) {
     }
   });
   return hasValue ? data : null;
+}
+
+function buildMetadata(notes, customFields) {
+  const metadata = {};
+  if (notes) {
+    metadata.notes = notes;
+  }
+  if (customFields && Object.keys(customFields).length > 0) {
+    metadata.customFields = customFields;
+  }
+  return Object.keys(metadata).length ? metadata : null;
 }
 
 function buildQrImageUrl(payload) {
@@ -791,17 +823,14 @@ function renderAssetList() {
     const remindersDue = (asset.reminders ?? []).filter((reminder) => !reminder.completed);
     const documents = renderDocumentList(asset.documents ?? []);
     const qrBlock = renderQrBlock(asset);
+    const assetPhoto = renderPrimaryPhoto(asset);
     card.innerHTML = `
       <header>
         <h4>${asset.name}</h4>
         <span class="chip status ${asset.status}">${asset.status}</span>
       </header>
-      <div class="asset-meta">
-        <span class="chip category">${asset.category}</span>
-        <span>${asset.assetTag}</span>
-        <span>${formatDate(asset.purchaseDate)}</span>
-        <span>${asset.owner || 'Unassigned'}</span>
-      </div>
+      ${assetPhoto}
+      ${renderStandardMeta(asset)}
       ${qrBlock}
       ${renderMetadataList(asset.metadata)}
       ${documents}
@@ -848,6 +877,7 @@ function renderCategoryFields(category) {
   const config = CATEGORY_FIELD_CONFIG[category];
   if (!config || config.length === 0) {
     container.classList.add('hidden');
+    container.innerHTML = '';
     return;
   }
   container.classList.remove('hidden');
@@ -965,8 +995,8 @@ function renderDocumentList(documents) {
 
 function renderMetadataList(metadata) {
   if (!metadata || Object.keys(metadata).length === 0) return '';
-  const rows = Object.entries(metadata)
-    .filter(([key]) => key !== 'notes')
+  const fields = metadata.customFields ?? metadata.fields ?? {};
+  const rows = Object.entries(fields)
     .map(([key, value]) => {
       const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
       const displayValue = typeof value === 'string' && value.endsWith('Z') && !Number.isNaN(Date.parse(value))
@@ -978,6 +1008,33 @@ function renderMetadataList(metadata) {
   const notes = metadata.notes ? `<p class="metadata-notes">${metadata.notes}</p>` : '';
   if (!rows && !notes) return '';
   return `<div class="metadata-block">${rows}${notes}</div>`;
+}
+
+function renderPrimaryPhoto(asset) {
+  const photo = asset.primaryPhoto;
+  if (!photo) return '';
+  const url = photo.storagePath ? `/api/download?path=${encodeURIComponent(photo.storagePath)}` : photo.url;
+  if (!url) return '';
+  return `
+    <div class="asset-photo">
+      <img src="${url}" alt="${asset.name}" />
+    </div>
+  `;
+}
+
+function renderStandardMeta(asset) {
+  const rows = [
+    ['Asset Tag', asset.assetTag],
+    ['Category', asset.category],
+    ['Owner', asset.owner || 'Unassigned'],
+    ['Purchase Date', formatDate(asset.purchaseDate)],
+  ]
+    .map(
+      ([label, value]) =>
+        `<div class="meta-row"><span>${label}</span><strong>${value ?? '—'}</strong></div>`,
+    )
+    .join('');
+  return `<div class="metadata-block standard-meta">${rows}</div>`;
 }
 
 async function openQrModal(assetId) {
@@ -1155,6 +1212,13 @@ function showToast(message, variant = 'info') {
 
 function handleError(error) {
   console.error(error);
+  if (error?.code === 'auth/unauthorized-domain') {
+    showToast(
+      `This domain (${window.location.origin}) is not authorized in Firebase Authentication. Add it under Authentication → Settings → Authorized domains.`,
+      'error',
+    );
+    return;
+  }
   const message = error?.message ?? 'Unexpected error. Check console for details.';
   showToast(message, 'error');
 }
@@ -1208,6 +1272,7 @@ function showAssetDetail(asset) {
     <p><strong>Status:</strong> ${asset.status}</p>
     <p><strong>Owner:</strong> ${asset.owner || 'Unassigned'}</p>
     <p><strong>Purchase Date:</strong> ${formatDate(asset.purchaseDate)}</p>
+    ${renderPrimaryPhoto(asset)}
     ${renderMetadataList(asset.metadata)}
     <div class="qr-block">
       <img src="${qrImg}" alt="QR code for ${asset.name}" />
@@ -1232,12 +1297,37 @@ function hideAssetDetail() {
 }
 
 function setActiveTab(tab) {
+  if (document.querySelector('.tabs')?.classList.contains('hidden')) {
+    return;
+  }
   document.querySelectorAll('.tab-button').forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === tab);
   });
   document.querySelectorAll('.tab-panel').forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.panel === tab);
   });
+}
+
+function hasAshramAccess() {
+  if (hasHeadOfficeAccess()) return true;
+  return (state.profile?.ashramIds ?? []).length > 0;
+}
+
+function applyAccessRestrictions() {
+  const hasAccess = hasAshramAccess();
+  document.getElementById('noAccessCard')?.classList.toggle('hidden', hasAccess);
+  ACCESS_CONTROLS().forEach((element) => {
+    element.classList.toggle('hidden', !hasAccess);
+  });
+  if (!hasAccess) {
+    state.assetDocs = [];
+    state.selectedAshramId = '';
+    localStorage.removeItem('selectedAshramId');
+    renderAssetList();
+    renderDocumentList([]);
+    renderAshramStats([]);
+    renderReminders([]);
+  }
 }
 
 async function attachDocumentFlow(assetId) {
